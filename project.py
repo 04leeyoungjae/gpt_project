@@ -10,18 +10,8 @@ class session:
         self.model="gpt-4o-mini"
         self.current_filename:str=current_filename
         self.chatlog=[]
-        self.gpt_func=[
-            {
-                "name" : "time_check",
-                "description" : "현재 시간을 불러오는 함수",
-                "parameters" : {
-                    "type" : "object",
-                    "properties" : {
-                    },
-                },
-                "required":[],
-            },
-        ]
+        self.gpt_func=[]
+        self.load_functions()
         self.load_session()
      
     def load_session(self):
@@ -118,9 +108,32 @@ class session:
         elif choice=="1":
             self.change_session()
             
+    def load_functions(self):
+        def class_into_list(c):
+            ret = []
+            for item in dir(c):
+                if not(item.startswith("__") or item.endswith("__")):
+                    ret.append(getattr(c,item))
+            return ret
+        funcs:list=class_into_list(self.gpt_function)
+        for func in funcs:
+            self.gpt_func.append(json.loads(func.__doc__))
+            
     class gpt_function:
         @staticmethod
         def time_check():
+            """
+            {
+                "name" : "time_check",
+                "description" : "현재 시간을 불러오는 함수",
+                "parameters" : {
+                    "type" : "object",
+                    "properties" : {
+                    }
+                },
+                "required":[]
+            }
+            """
             from datetime import datetime
             return datetime.now().strftime("%Y-%m-%d - %H:%M:%S")
 
