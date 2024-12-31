@@ -10,6 +10,18 @@ class session:
         self.model="gpt-4o-mini"
         self.current_filename:str=current_filename
         self.chatlog=[]
+        self.gpt_func=[
+            {
+                "name" : "time_check",
+                "description" : "현재 시간을 불러오는 함수",
+                "parameters" : {
+                    "type" : "object",
+                    "properties" : {
+                    },
+                },
+                "required":[],
+            },
+        ]
         self.load_session()
      
     def load_session(self):
@@ -68,12 +80,28 @@ class session:
         # 세션에 대화 붙이기
         self.chatlog.append({"role":role,"content":content})
 
-    def gptchat(self,user_input:str):    
+    def gptchat(self,user_input:str):
+        def check_functioncall(response):
+            #함수 호출이 감지되면 실행 후 다시 대화생성
+            if (response.choices[0].finish_reason == "function_call"):
+                call=response.choices[0].message.function_call
+                function_ret=getattr(self.gpt_function,call.name)(**json.loads(call.arguments))
+                self.chatlog.append({"role" : "function","name" : call.name,"content":function_ret})
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=self.chatlog,
+                    functions=self.gpt_func,
+                )
+            return response
+        
         self.append_chat("user",user_input)
         response = self.client.chat.completions.create(
             model=self.model,
-            messages=self.chatlog
+            messages=self.chatlog,
+            functions=self.gpt_func
         )
+        response=check_functioncall(response)
+        
         answer=response.choices[0].message.content
         self.append_chat("assistant",answer)
         print(f"assistant({self.model}) : {answer}")
@@ -89,6 +117,13 @@ class session:
             self.change_model()
         elif choice=="1":
             self.change_session()
+            
+    class gpt_function:
+        @staticmethod
+        def time_check():
+            from datetime import datetime
+            return datetime.now().strftime("%Y-%m-%d - %H:%M:%S")
+
     
 def chat(current_session:session):
     print(f"디버그 : {current_session.current_filename, current_session.model}")
