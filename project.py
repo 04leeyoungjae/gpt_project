@@ -7,9 +7,10 @@ class session:
         with open("openai_api.key") as f:
             key=f.read() # TODO : env로 바꾸기
         self.client = OpenAI(api_key=key)
-        self.model="gpt-4o-mini"
+        self.model="gpt-4o"
         self.current_filename:str=current_filename
         self.chatlog=[]
+        self.gpt_function=gpt_functions(self)
         self.gpt_func:(list | None)=[] #빈 리스트를 그대로 사용하면 오류 발생
         self.load_functions()
         self.load_session()
@@ -27,11 +28,11 @@ class session:
             self.chatlog=[]
         except json.JSONDecodeError:
             # 파일이 깨졌으면 오류처리, 공란인 경우 새로 작성
-            if not history:
+            if history:
                 raise Exception("File corruption detected")
             self.chatlog=[]
-        except:
-            raise Exception("Unknown Error")
+        except Exception as e:
+            raise Exception("Unknown Error", e)
         
         if not isinstance(self.chatlog,list):
             # 임의로 list 형식을 벗어난 json 감지
@@ -66,22 +67,32 @@ class session:
         self.current_filename=input("Enter new session name> ")
         self.load_session()
 
-    def append_chat(self,role:str,content:str):
+    def append_chat(self,role:str,content:str,func_name=None):
         # 세션에 대화 붙이기
-        self.chatlog.append({"role":role,"content":content})
+        if not content:
+            raise "내용이 비어있습니다."
+        message={"role":role,"content":content}
+        if func_name:
+            message["name"]=func_name
+        self.chatlog.append(message)
 
     def gptchat(self,user_input:str):
-        def check_functioncall(response):
+        def check_functioncall(response,max_repeat=5):
             #함수 호출이 감지되면 실행 후 다시 대화생성
-            if (response.choices[0].finish_reason == "function_call"):
-                call=response.choices[0].message.function_call
-                function_ret=getattr(self.gpt_function,call.name)(**json.loads(call.arguments))
-                self.chatlog.append({"role" : "function","name" : call.name,"content":function_ret})
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=self.chatlog,
-                    functions=self.gpt_func,
-                )
+            for repeat in range(max_repeat):
+                if (response.choices[0].finish_reason == "function_call"):
+                    func=response.choices[0].message.function_call
+                    function_ret:str=self.gpt_function(func.name)(**json.loads(func.arguments))
+                    self.append_chat("function",function_ret,func.name)
+                    response = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=self.chatlog,
+                        functions=self.gpt_func,
+                    )
+                    # print(f"debug : {response}")
+                else:
+                    break
+            # exit(0)
             return response
         
         self.append_chat("user",user_input)
@@ -113,7 +124,8 @@ class session:
             ret = []
             for item in dir(c):
                 if not(item.startswith("__") or item.endswith("__")):
-                    ret.append(getattr(c,item))
+                    if callable(func:=getattr(c,item)):
+                        ret.append(func) 
             return ret
         funcs:list=class_into_list(self.gpt_function)
         for func in funcs:
@@ -122,24 +134,69 @@ class session:
         if not(self.gpt_func):
             self.gpt_func=None
             
-    class gpt_function:
-        @staticmethod
-        def time_check():
-            """
-            {
-                "name" : "time_check",
-                "description" : "현재 시간을 불러오는 함수",
-                "parameters" : {
-                    "type" : "object",
-                    "properties" : {
+class gpt_functions:
+    #장기적으로 gpt_function은 외부파일로 관리하여 import할것이기에 독립
+    def __init__(self,s:session):
+        self.session=s
+    
+    def __call__(self,name):
+        if hasattr(self,name):
+            return getattr(self,name)
+        raise Exception(f"존재하지 않는 함수({name})를 참조했습니다.")
+    
+    @staticmethod
+    def time_check():
+        """
+        {
+            "name" : "time_check",
+            "description" : "현재 시간을 불러오는 함수",
+            "parameters" : {
+                "type" : "object",
+                "properties" : {
+                }
+            },
+            "required":[]
+        }
+        """
+        from datetime import datetime
+        return datetime.now().strftime("%Y-%m-%d - %H:%M:%S")
+    
+    def cmd(self,command):
+        """
+        {
+            "name" : "cmd",
+            "description" : "윈도우를 사용하는 사용자의 cmd 명령어를 제한적으로 사용합니다. 사용자의 최종 확인이 있어야합니다.",
+            "parameters" : {
+                "type" : "object",
+                "properties" : {
+                    "command" : {
+                        "type" : "string",
+                        "description" : "cmd로 실행할 명령어"
                     }
-                },
-                "required":[]
-            }
-            """
-            from datetime import datetime
-            return datetime.now().strftime("%Y-%m-%d - %H:%M:%S")
-
+                }
+            },
+            "required":["command"]
+        }
+        """
+        import os
+        print(f"경고 : chatgpt가 ({command})를 실행하려합니다. 계속 진행하시겠습니까?(y/n)")
+        if input().lower()!="y":
+            self.session.append_chat("system","사용자가 명령어를 거부하였습니다.")
+            return "reject"
+        else:
+            try:
+                shell=os.popen(command)
+                result=shell.read()
+                shell.close()
+                self.session.append_chat("system","assistant는 함수를 그만 호출해도됩니다.")
+                if result:
+                    print(f"system : {result}")
+                else:
+                    result="명령을 성공적으로 수행했습니다."
+                return result
+            except Exception as e:
+                self.session.append_chat("system",f"명령 수행중 에러가 발생했습니다. {e}")
+                return "error"
     
 def chat(current_session:session):
     print(f"디버그 : {current_session.current_filename, current_session.model}")
