@@ -10,7 +10,7 @@ class session:
         self.model="gpt-4o-mini"
         self.current_filename:str=current_filename
         self.chatlog=[]
-        self.gpt_func=[]
+        self.gpt_func:(list | None)=[] #빈 리스트를 그대로 사용하면 오류 발생
         self.load_functions()
         self.load_session()
      
@@ -27,7 +27,7 @@ class session:
             self.chatlog=[]
         except json.JSONDecodeError:
             # 파일이 깨졌으면 오류처리, 공란인 경우 새로 작성
-            if history is True:
+            if not history:
                 raise Exception("File corruption detected")
             self.chatlog=[]
         except:
@@ -118,6 +118,9 @@ class session:
         funcs:list=class_into_list(self.gpt_function)
         for func in funcs:
             self.gpt_func.append(json.loads(func.__doc__))
+        #비어있는 리스트 사용시 오류 발생하므로 None으로 초기화해줌
+        if not(self.gpt_func):
+            self.gpt_func=None
             
     class gpt_function:
         @staticmethod
